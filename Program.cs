@@ -7,7 +7,7 @@ public class Program
     private static readonly string EndpointUri = "https://nikolai-cosmos-cli.documents.azure.com:443";
 
     // Set variable to the Primary Key from earlier.
-    private static readonly string PrimaryKey = "K0w6akZZ3qdii0Te4eCHNUvKPq6nuJsitF5ZiO0kIHbMePaB38sS8prZAbY0Q0l4qH4hKcnQfTFC8DUDJYZdQg==";
+    private static readonly string PrimaryKey = "xS8ORATpDzYsMuh61G99ungfTlTNOhpQr0fS44FKK0czOYionIPLdfeljzCZG0qzMtc0nDBarm0cACDbbxBjrg==";
 
     // The Cosmos client instance
     private CosmosClient cosmosClient;
@@ -21,6 +21,7 @@ public class Program
     // The names of the database and container we will create
     private string databaseId = "az204Database";
     private string containerId = "az204Container";
+    private string partitionKeyPath = "/AccountNumber";
 
     public static async Task Main(string[] args)
     {
@@ -57,6 +58,12 @@ public class Program
 
         // Run the CreateContainerAsync method
         await this.CreateContainerAsync();
+
+        // Create items
+        await this.CreateItemsAsync();
+
+        // Query items
+        await this.ReadAllItems();
     }
 
     private async Task CreateDatabaseAsync()
@@ -69,8 +76,84 @@ public class Program
     private async Task CreateContainerAsync()
     {
         // Create a new container
-        this.container = await this.database.CreateContainerIfNotExistsAsync(containerId, "/LastName");
+        this.container = await this.database.CreateContainerIfNotExistsAsync(containerId, partitionKeyPath);
         Console.WriteLine("Created Container: {0}\n", this.container.Id);
+    }
+
+    private async Task CreateItemsAsync()
+    {
+        // Create some items to be read back later
+        for (int i = 0; i < 5; i++)
+        {
+            SalesOrder salesOrder = GetSalesOrderSample($"SalesOrderForReadMany{i}");
+            ItemResponse<SalesOrder> response = await this.container.CreateItemAsync(salesOrder, new PartitionKey(salesOrder.AccountNumber));
+            Console.WriteLine("Created Item {0}\n", response.Resource);
+        } 
+    }
+
+    // <ReadAllItems>
+    private async Task ReadAllItems()
+    {
+        //******************************************************************************************************************
+        // 1.3 - Read all items in a container
+        //
+        // NOTE: Operations like AsEnumerable(), ToList(), ToArray() will make as many trips to the database
+        //       as required to fetch the entire result-set. Even if you set MaxItemCount to a smaller number. 
+        //       MaxItemCount just controls how many results to fetch each trip. 
+        //******************************************************************************************************************
+        Console.WriteLine("\n1.3 - Read all items with query using a specific partition key");
+
+        List<SalesOrder> allSalesForAccount1 = new List<SalesOrder>();
+        using (FeedIterator<SalesOrder> resultSet = this.container.GetItemQueryIterator<SalesOrder>(
+            queryDefinition: null,
+            requestOptions: new QueryRequestOptions()
+            {
+                PartitionKey = new PartitionKey("Account1")
+            }))
+        {
+            while (resultSet.HasMoreResults)
+            {
+                FeedResponse<SalesOrder> response = await resultSet.ReadNextAsync();
+                SalesOrder sale = response.First();
+                Console.WriteLine($"\n1.3.1 Account Number: {sale.AccountNumber}; Id: {sale.Id};");
+                if (response.Diagnostics != null)
+                {
+                    Console.WriteLine($" Diagnostics {response.Diagnostics.ToString()}");
+                }
+
+                allSalesForAccount1.AddRange(response);
+            }
+        }
+    }
+
+    private static SalesOrder GetSalesOrderSample(string itemId)
+    {
+        SalesOrder salesOrder = new SalesOrder
+        {
+            Id = itemId,
+            AccountNumber = "Account1",
+            PurchaseOrderNumber = "PO18009186470",
+            OrderDate = new DateTime(2005, 7, 1),
+            SubTotal = 419.4589m,
+            TaxAmount = 12.5838m,
+            Freight = 472.3108m,
+            TotalDue = 985.018m,
+            Items = new SalesOrderDetail[]
+            {
+                new SalesOrderDetail
+                {
+                    OrderQty = 1,
+                    ProductId = 760,
+                    UnitPrice = 419.4589m,
+                    LineTotal = 419.4589m
+                }
+            },
+        };
+
+        // Set the "ttl" property to auto-expire sales orders in 30 days 
+        salesOrder.TimeToLive = 60 * 60 * 24 * 30;
+
+        return salesOrder;
     }
 }
 
